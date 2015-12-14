@@ -1,6 +1,8 @@
 import os
+import sys
 import json
 import click
+from twisted.python import log
 from twisted.web.server import Site
 from twisted.web.resource import Resource
 from twisted.internet import reactor
@@ -26,9 +28,11 @@ class TaskFile(object):
 			self.bytePos = 0
 			self.writeBytePos()
 		self.f.seek(self.bytePos)
+		log.msg("Reading from {} at position {}".format(self.f, self.bytePos))
 
 	def writeBytePos(self):
 		self.bytePosFile.truncate(0)
+		self.bytePosFile.seek(0)
 		self.bytePosFile.write(str(self.bytePos))
 		self.bytePosFile.flush()
 
@@ -48,8 +52,6 @@ class TaskFile(object):
 @click.argument('task_file')
 @click.argument('dir')
 def main(port, interface, task_file, dir):
-	import sys
-	from twisted.python import log
 	log.startLogging(sys.stdout)
 
 	try:
