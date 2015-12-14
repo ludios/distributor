@@ -2,39 +2,49 @@ import os
 import sys
 import json
 import click
+from collections import defaultdict
 from twisted.python import log
 from twisted.web.server import Site
 from twisted.web.resource import Resource
 from twisted.internet import reactor
 
 
-class Next(Resource):
-	def __init__(self, taskFile):
+class NextTaskResource(Resource):
+	def __init__(self, taskFile, workerStats):
 		Resource.__init__(self)
 		self.taskFile = taskFile
+		self.workerStats = workerStats
 
 	def render_POST(self, request):
 		worker = request.args['worker'][0]
+		newStats = self.workerStats.get()
+		newStats[worker] += 1
+		self.workerStats.set(newStats)
 		return json.dumps(self.taskFile.next())
 
 
 class PersistedValue(object):
-	def __init__(self, p, default):
+	def __init__(self, path, default, transform=lambda v: v):
+		"""
+		path - file to store value in
+		default - default value if no file exists
+		transform - (optional) function to transform JSON-decoded value
+			to something more useful
+		"""
 		try:
-			self.f = open(p, "rb+")
+			self.f = open(path, "rb+")
 			self.s = self.f.read()
 			# Stripping NULL is safe because we store only JSON
-			self.v = json.loads(self.s.rstrip('\x00'))
+			self.v = transform(json.loads(self.s.rstrip('\x00')))
 		except (OSError, IOError):
-			self.f = open(p, "wb")
+			self.f = open(path, "wb")
+			self.s = ''
 			self.set(default)
 
 	def get(self):
 		return self.v
 
 	def set(self, v):
-		if v == self.v:
-			return
 		s = json.dumps(v)
 		# We might write a value shorter than the previous value, but the system
 		# may crash between the write+flush and the truncate call.  To prevent us
@@ -83,10 +93,15 @@ def main(port, interface, task_file, dir):
 		os.makedirs(dir)
 	except OSError:
 		pass
+	workerStats = PersistedValue(
+		os.path.join(dir, "worker-stats"),
+		defaultdict(int),
+		lambda d: defaultdict(int, d)
+	)
 	taskFile = TaskFile(open(task_file, 'rb'), dir)
 
 	root = Resource()
-	root.putChild("next", Next(taskFile))
+	root.putChild("next", NextTaskResource(taskFile, workerStats))
 	factory = Site(root)
 	reactor.listenTCP(port, factory, interface=interface)
 	reactor.run()
