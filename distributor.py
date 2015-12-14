@@ -36,15 +36,16 @@ class PersistedValue(object):
 		if v == self.v:
 			return
 		s = json.dumps(v)
+		# We might write a value shorter than the previous value, but the system
+		# may crash between the write+flush and the truncate call.  To prevent us
+		# from seeing a corrupted value after a crash, pad the new value with NULLs
+		# to match the length of the previous value.  This should ensure that for
+		# values up to 4KB, we don't risk losing a recent value.
 		padLength = len(self.s) - len(s)
 		if padLength > 0:
-			# This will be truncated off immediately after the flush
+			# This will be truncated off immediately after the flush.
 			s += ('\x00' * padLength)
 		self.f.seek(0)
-		# We might write a value shorter than the last value, but the filesystem/system
-		# may crash between the write+flush and the truncate call.  To prevent us from
-		# seeing a corrupted value after crashes, pad the new value with NULLs if necessary.
-		# This should ensure that values up to 4KB don't risk of losing a recent value.
 		self.f.write(s)
 		self.f.flush()
 		self.f.truncate(len(s))
