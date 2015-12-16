@@ -10,17 +10,19 @@ from twisted.internet import reactor
 
 
 class NextTaskResource(Resource):
-	def __init__(self, taskFile, workerStats):
+	def __init__(self, taskFile, workerStats, wrapValue):
 		Resource.__init__(self)
 		self.taskFile = taskFile
 		self.workerStats = workerStats
+		self.wrapValue = wrapValue
 
 	def render_POST(self, request):
 		worker = request.args['worker'][0]
 		newStats = self.workerStats.get()
 		newStats[worker] += 1
 		self.workerStats.set(newStats)
-		return json.dumps(self.taskFile.next())
+		v = self.taskFile.next()
+		return json.dumps(self.wrapValue(worker, v))
 
 
 class PersistedValue(object):
@@ -79,15 +81,28 @@ class TaskFile(object):
 		return line.rstrip('\r\n')
 
 
+def getLocals(fname):
+	_locals = {}
+	execfile(fname, {}, _locals)
+	return _locals
+
+
 @click.command()
 @click.option('--port', default=31000, metavar='PORT',
 	help='Listen on PORT (default: 31000).')
 @click.option('--interface', default="0.0.0.0", metavar='INTERFACE',
 	help='Listen on INTERFACE (default: "0.0.0.0").')
+@click.option('--hooks', default=None, metavar='HOOKS_FILE',
+	help='Wrap values with wrap_value(worker, v) function in HOOKS_FILE')
 @click.argument('task_file')
 @click.argument('dir')
-def main(port, interface, task_file, dir):
+def main(port, interface, hooks, task_file, dir):
 	log.startLogging(sys.stdout)
+
+	if hooks is not None:
+		wrapValue = getLocals(hooks)['wrap_value']
+	else:
+		wrapValue = lambda worker, v: v
 
 	try:
 		os.makedirs(dir)
@@ -101,7 +116,7 @@ def main(port, interface, task_file, dir):
 	taskFile = TaskFile(open(task_file, 'rb'), dir)
 
 	root = Resource()
-	root.putChild("next", NextTaskResource(taskFile, workerStats))
+	root.putChild("next", NextTaskResource(taskFile, workerStats, wrapValue))
 	factory = Site(root)
 	reactor.listenTCP(port, factory, interface=interface)
 	reactor.run()
